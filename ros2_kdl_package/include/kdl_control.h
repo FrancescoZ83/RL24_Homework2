@@ -17,6 +17,10 @@ public:
                            KDL::JntArray &_ddqd,
                            double _Kp,
                            double _Kd);
+                           
+    Eigen::VectorXd PDplus(KDL::JntArray &_qd,
+                           double _Kp,
+                           double _Kd);
 
     Eigen::VectorXd idCntr(KDL::Frame &_desPos,
                            KDL::Twist &_desVel,

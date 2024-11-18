@@ -376,6 +376,7 @@ def generate_launch_description():
             on_exit=[robot_controller_spawner],
         )
     )
+    
 
     nodes = [
         gazebo,

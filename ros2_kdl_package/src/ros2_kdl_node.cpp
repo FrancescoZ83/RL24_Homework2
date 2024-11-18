@@ -36,11 +36,19 @@ class Iiwa_pub_sub : public rclcpp::Node
             // declare cmd_interface parameter (position, velocity)
             declare_parameter("cmd_interface", "position"); // defaults to "position"
             get_parameter("cmd_interface", cmd_interface_);
+            declare_parameter("traj_type", "lin_pol");
+            get_parameter("traj_type", traj_type_);
+            
             RCLCPP_INFO(get_logger(),"Current cmd interface is: '%s'", cmd_interface_.c_str());
+            RCLCPP_INFO(get_logger(),"Current trajectory type is: '%s'", traj_type_.c_str());
 
-            if (!(cmd_interface_ == "position" || cmd_interface_ == "velocity"))
+            if (!(cmd_interface_ == "position" || cmd_interface_ == "velocity" || cmd_interface_ == "torque"))
             {
                 RCLCPP_INFO(get_logger(),"Selected cmd interface is not valid!"); return;
+            }
+            if (!(traj_type_ == "lin_pol" || traj_type_ == "lin_trap" || traj_type_ == "cir_pol" || traj_type_ == "cir_trap"))
+            {
+                RCLCPP_INFO(get_logger(),"Selected trajectory type is not valid!"); return;
             }
 
             iteration_ = 0;
@@ -72,7 +80,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             q_max.data <<  2.96,2.09,2.96,2.09,2.96,2.09,2.96; //2*M_PI, 2*M_PI; // TODO: read from urdf file          
             robot_->setJntLimits(q_min,q_max);            
             joint_positions_.resize(nj); 
-            joint_velocities_.resize(nj); 
+            joint_velocities_.resize(nj);
+            joint_torques_.resize(nj);
 
             // Subscriber to jnt states
             jointSubscriber_ = this->create_subscription<sensor_msgs::msg::JointState>(
@@ -114,14 +123,21 @@ class Iiwa_pub_sub : public rclcpp::Node
             double traj_duration = 1.5, acc_duration = 0.5, t = 0.0, radius=0.3;
             planner_linear = KDLPlanner(traj_duration, init_position, end_position);
             planner_circle = KDLPlanner(traj_duration, init_position, radius);
-            planner_original = KDLPlanner(traj_duration, acc_duration, init_position, end_position);
             
             // Retrieve the first trajectory point
-            //trajectory_point p = planner_linear.compute_trajectory_linear(t);
-            //trajectory_point p = planner_linear.compute_trajectory_linear(t, acc_duration);
-            //trajectory_point p = planner_circle.compute_trajectory_circle(t);
-            trajectory_point p = planner_circle.compute_trajectory_circle(t, acc_duration);
-            //trajectory_point p = planner_original.compute_trajectory(t);
+            
+            trajectory_point p;
+            
+            if(traj_type_ == "lin_pol"){
+                p = planner_linear.compute_trajectory_linear(t);
+            }else if(traj_type_ == "lin_trap"){
+                p = planner_linear.compute_trajectory_linear(t, acc_duration);
+            }else if(traj_type_ == "cir_pol"){
+                p = planner_circle.compute_trajectory_circle(t);
+            }else if(traj_type_ == "cir_trap"){
+                p = planner_circle.compute_trajectory_circle(t, acc_duration);
+            }
+            
 
             // compute errors
             Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(init_cart_pose_.p.data));
@@ -138,7 +154,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                     desired_commands_[i] = joint_positions_(i);
                 }
             }
-            else{
+            else if(cmd_interface_ == "velocity"){
                 // Create cmd publisher
                 cmdPublisher_ = this->create_publisher<FloatArray>("/velocity_controller/commands", 10);
                 timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
@@ -147,6 +163,13 @@ class Iiwa_pub_sub : public rclcpp::Node
                 // Send joint velocity commands
                 for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
                     desired_commands_[i] = joint_velocities_(i);
+                }
+            } else if(cmd_interface_ == "torque"){
+                cmdPublisher_ = this->create_publisher<FloatArray>("/effort_controller/commands", 10);
+                timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
+                                            std::bind(&Iiwa_pub_sub::cmd_publisher, this));
+                for (long int i = 0; i < joint_torques_.data.size(); ++i) {
+                    desired_commands_[i] = joint_torques_(i);
                 }
             }
 
@@ -171,6 +194,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             int loop_rate = trajectory_len / total_time;
             double dt = 1.0 / loop_rate;
             t_+=dt;
+            
 
             if (t_ < total_time){
 
@@ -183,17 +207,33 @@ class Iiwa_pub_sub : public rclcpp::Node
                 // joint_positions_.data += joint_velocities_.data * dt;
 
                 // Retrieve the trajectory point
-                //trajectory_point p = planner_linear.compute_trajectory_linear(t_);
-                //trajectory_point p = planner_linear.compute_trajectory_linear(t_, acc_duration);
-                //trajectory_point p = planner_circle.compute_trajectory_circle(t_);
-                trajectory_point p = planner_circle.compute_trajectory_circle(t_, acc_duration);
-                //trajectory_point p = planner_original.compute_trajectory(t_);
+                
+                trajectory_point p;
+                if(traj_type_ == "lin_pol"){
+                    p = planner_linear.compute_trajectory_linear(t_);
+                }else if(traj_type_ == "lin_trap"){
+                    p = planner_linear.compute_trajectory_linear(t_, acc_duration);
+                }else if(traj_type_ == "cir_pol"){
+                    p = planner_circle.compute_trajectory_circle(t_);
+                }else if(traj_type_ == "cir_trap"){
+                    p = planner_circle.compute_trajectory_circle(t_, acc_duration);
+                }
+                
 
                 // Compute EE frame
-                KDL::Frame cartpos = robot_->getEEFrame();           
+                KDL::Frame cartpos = robot_->getEEFrame();          
 
                 // Compute desired Frame
                 KDL::Frame desFrame; desFrame.M = cartpos.M; desFrame.p = toKDL(p.pos); 
+                
+                Eigen::Matrix<double, 6, 1> des_6d;
+                des_6d.head<3>() = p.vel;
+                des_6d.tail<3>().setZero();
+                KDL::Twist desTwistV = toKDLTwist(des_6d);
+                des_6d.head<3>() = p.acc;
+                des_6d.tail<3>().setZero();
+                KDL::Twist desTwistA = toKDLTwist(des_6d);
+
 
                 // compute errors
                 Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(cartpos.p.data));
@@ -207,12 +247,25 @@ class Iiwa_pub_sub : public rclcpp::Node
                     // Compute IK
                     robot_->getInverseKinematics(nextFrame, joint_positions_);
                 }
-                else{
+                else if(cmd_interface_ == "velocity"){
 
                     // Compute differential IK
                     Vector6d cartvel; cartvel << p.vel + 5*error, o_error;
                     joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
                     joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
+                } else if(cmd_interface_ == "torque"){
+                    
+                    /*Vector6d cartvel; cartvel << p.vel, o_error;
+                    Vector6d cartacc; cartacc << p.acc, o_error;
+                    
+                    KDL::JntArray joint_desired_, joint_vel_des_, joint_acc_des_;
+                    robot_->getInverseKinematics(desFrame, joint_desired_);
+                    joint_vel_des_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
+                    joint_acc_des_.data = pseudoinverse(robot_->getEEJacobian().data) * (cartacc - robot_->getEEJacDotqDot());
+                        
+                    joint_torques_.data = controller_->idCntr(joint_desired_, joint_vel_des_, joint_acc_des_, 50, 10);*/
+                    
+                    //joint_torques_.data = controller_->idCntr(desFrame, desTwistV, desTwistA, 50, 0, 10, 0);
                 }
 
                 // Update KDLrobot structure
@@ -224,10 +277,14 @@ class Iiwa_pub_sub : public rclcpp::Node
                         desired_commands_[i] = joint_positions_(i);
                     }
                 }
-                else{
+                else if(cmd_interface_ == "velocity"){
                     // Send joint velocity commands
                     for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
                         desired_commands_[i] = joint_velocities_(i);
+                    }
+                } else if(cmd_interface_ == "torque"){
+                    for (long int i = 0; i < joint_torques_.data.size(); ++i) {
+                        desired_commands_[i] = joint_torques_(i);
                     }
                 }
 
@@ -276,6 +333,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             for (unsigned int i  = 0; i < sensor_msg.position.size(); i++){
                 joint_positions_.data[i] = sensor_msg.position[i];
                 joint_velocities_.data[i] = sensor_msg.velocity[i];
+                joint_torques_.data[i] = sensor_msg.effort[i];
             }
         }
 
@@ -288,7 +346,9 @@ class Iiwa_pub_sub : public rclcpp::Node
         std::vector<double> desired_commands_ = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
         KDL::JntArray joint_positions_;
         KDL::JntArray joint_velocities_;
+        KDL::JntArray joint_torques_;
         std::shared_ptr<KDLRobot> robot_;
+        std::shared_ptr<KDLController> controller_;
         KDLPlanner planner_linear;
         KDLPlanner planner_circle;
         KDLPlanner planner_original;
@@ -297,6 +357,7 @@ class Iiwa_pub_sub : public rclcpp::Node
         bool joint_state_available_;
         double t_;
         std::string cmd_interface_;
+        std::string traj_type_;
         KDL::Frame init_cart_pose_;
 };
 
