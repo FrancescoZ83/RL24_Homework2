@@ -115,15 +115,13 @@ class Iiwa_pub_sub : public rclcpp::Node
             KDLController controller_(*robot_);
 
             // EE's trajectory initial position (just an offset)
-            Eigen::Vector3d init_position(Eigen::Vector3d(init_cart_pose_.p.data) - Eigen::Vector3d(0,0,0.1));
+            Eigen::Vector3d init_position(Eigen::Vector3d(init_cart_pose_.p.data) + Eigen::Vector3d(0,0,0.1));
 
             // EE's trajectory end position (just opposite y)
             Eigen::Vector3d end_position; end_position << init_position[0], -init_position[1], init_position[2];
-            
-            //init_position = end_position; ///////////////////
 
             // Plan trajectory
-            double traj_duration = 1.5, acc_duration = 0.5, t = 0.0, radius=0.3;
+            double traj_duration = 5, acc_duration = 0.5, t = 0.0, radius=0.3;
             planner_linear = KDLPlanner(traj_duration, init_position, end_position);
             planner_circle = KDLPlanner(traj_duration, init_position, radius);
             
@@ -147,9 +145,6 @@ class Iiwa_pub_sub : public rclcpp::Node
             
             dvel.data = Eigen::VectorXd::Zero(7);
             robot_->getInverseKinematics(des_pos_rot_, dpos);
-
-            // compute errors
-            //Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(init_cart_pose_.p.data));
             
             if(cmd_interface_ == "position"){
                 // Create cmd publisher
@@ -196,8 +191,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             iteration_ = iteration_ + 1;
 
             // define trajectory
-            double total_time = 1.5;
-            int trajectory_len = 150;
+            double total_time = 5;
+            int trajectory_len = 500;
             double acc_duration = 0.5;
             int loop_rate = trajectory_len / total_time;
             double dt = 1.0 / loop_rate;
@@ -229,19 +224,6 @@ class Iiwa_pub_sub : public rclcpp::Node
                 // Compute desired Frame
                 KDL::Frame desFrame; desFrame.M = cartpos.M; desFrame.p = toKDL(p.pos);
                 
-                /*Eigen::Matrix<double, 6, 1> des_6d;
-                des_6d.head<3>() = p.vel;
-                des_6d.tail<3>().setZero();
-                KDL::Twist desTwistV = toKDLTwist(des_6d);
-                des_6d.head<3>() = p.acc;
-                des_6d.tail<3>().setZero();
-                KDL::Twist desTwistA = toKDLTwist(des_6d);*/
-
-                /*if(flag==0){
-                robot_->getInverseKinematics(desFrame, joint_positions_);
-                flag=1;
-                }*/
-
                 // compute errors
                 Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(cartpos.p.data));
                 Eigen::Vector3d o_error = computeOrientationError(toEigen(init_cart_pose_.M), toEigen(cartpos.M));
@@ -290,7 +272,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                     //joint_efforts_.data = controller_->idCntr(desFrame, desTwistV, desTwistA, 50, 0, 10, 0); */
                     
                     
-                    ///////////////////////////////////////////////
+                    /////////////////////////////////////////////// CLIK
                     
                     Vector6d cartvel; cartvel << p.vel, des_vel_rot_;
                     Vector6d cartacc; cartacc << p.acc, des_acc_rot_;
@@ -299,9 +281,14 @@ class Iiwa_pub_sub : public rclcpp::Node
                     KDL::Twist d_vel = toKDLTwist(cartvel);
                     KDL::Twist d_acc = toKDLTwist(cartacc);
                     
-                    controller_->CLIK(d_pos, d_vel, d_acc, 15, 8, dpos, dvel, dacc, dt, *robot_, 0.01);
-                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, 12, 5, *robot_) - robot_->getGravity();
-                }
+                    controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda);
+                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                    
+                    //joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, 0, KD_o, 0, *robot_, lambda);
+                    
+                    ///////////////////////////////////////////////////
+                    
+                }   
 
                 // Update KDLrobot structure
                 robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
@@ -330,9 +317,21 @@ class Iiwa_pub_sub : public rclcpp::Node
             }
             else{
                 RCLCPP_INFO_ONCE(this->get_logger(), "Trajectory executed successfully ...");
-                // Send joint velocity commands
+                // End Commands
+                
+                if(cmd_interface_ != "effort"){
                 for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
                     desired_commands_[i] = 0.0;
+                }} else if(cmd_interface_ == "effort"){
+                    
+                    robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
+                    dvel.data = Eigen::VectorXd::Zero(7);
+                    dacc.data = Eigen::VectorXd::Zero(7);
+                    
+                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
+                    for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
+                    desired_commands_[i] = joint_efforts_(i);
+                    }
                 }
                 
                 // Create msg and publish
@@ -376,6 +375,13 @@ class Iiwa_pub_sub : public rclcpp::Node
         std::string traj_type_;
         KDL::Frame init_cart_pose_;
         
+        double KP_j = 12;
+        double KD_j = 5;
+        double lambda = 0.01;
+        double KP_clik = 10;
+        double KD_clik = 4;
+        double KP_o = 2;
+        double KD_o = 1;
 };
 
  

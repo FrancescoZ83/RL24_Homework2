@@ -299,7 +299,7 @@ def generate_launch_description():
     )
 
 
-    declared_arguments.append(DeclareLaunchArgument('gz_args', default_value=iiwa_simulation_world,
+    declared_arguments.append(DeclareLaunchArgument('gz_args', default_value=[iiwa_simulation_world, ' -r'],
                               description='Arguments for gz_sim'),)    
 
     gazebo = IncludeLaunchDescription(

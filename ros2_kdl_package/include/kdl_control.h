@@ -34,7 +34,8 @@ public:
                            double _Kpp,
                            double _Kpo,
                            double _Kdp,
-                           double _Kdo);
+                           double _Kdo,
+                           KDLRobot &_robot, double lam);
 
 private:
 

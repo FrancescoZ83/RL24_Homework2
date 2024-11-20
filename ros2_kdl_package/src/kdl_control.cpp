@@ -75,14 +75,17 @@ Eigen::VectorXd KDLController::idCntr(KDL::Frame &_desPos,
                                       KDL::Twist &_desVel,
                                       KDL::Twist &_desAcc,
                                       double _Kpp, double _Kpo,
-                                      double _Kdp, double _Kdo)
-{
-    //Eigen::VectorXd e = 
-    //Eigen::VectorXd de = 
+                                      double _Kdp, double _Kdo, KDLRobot &_robot, double lam)
+{   
+    KDLRobot* rob = &_robot;
+    Vector6d err, derr;
+    computeErrors(_desPos, rob->getEEFrame(), _desVel, rob->getEEVelocity(), err, derr);
+    KDL::Twist dxdd = _desAcc;
     
-    /*
-    Eigen::VectorXd y = pseudoinverse(robot_->getEEJacobian().data) * (MytoEigen(_desAcc) + _Kdp*de + _Kpp*e - robot_->getEEJacDotqDot());
+    Eigen::MatrixXd Jdamp = this->computeDampedPseudoInverse(rob->getEEJacobian().data, lam);
+    //Jdamp = pseudoinverse(rob->getEEJacobian().data);
+    Eigen::VectorXd y = Jdamp * (toEigen(dxdd) + _Kdp*derr + _Kpp*err - rob->getEEJacDotqDot());
     
-    return robot_->getJsim() * y + robot_->getCoriolis() + robot_->getGravity();*/
+    return rob->getJsim() * y + rob->getCoriolis() + rob->getGravity();
 }
 
