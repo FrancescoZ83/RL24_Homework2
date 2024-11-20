@@ -38,7 +38,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             get_parameter("cmd_interface", cmd_interface_);
             declare_parameter("traj_type", "lin_pol");
             get_parameter("traj_type", traj_type_);
-            
+            declare_parameter("cont_type", "jnt");
+            get_parameter("cont_type", cont_type_);
             
             RCLCPP_INFO(get_logger(),"Current cmd interface is: '%s'", cmd_interface_.c_str());
             RCLCPP_INFO(get_logger(),"Current trajectory type is: '%s'", traj_type_.c_str());
@@ -50,6 +51,10 @@ class Iiwa_pub_sub : public rclcpp::Node
             if (!(traj_type_ == "lin_pol" || traj_type_ == "lin_trap" || traj_type_ == "cir_pol" || traj_type_ == "cir_trap"))
             {
                 RCLCPP_INFO(get_logger(),"Selected trajectory type is not valid!"); return;
+            }
+            if (!(cont_type_ == "jnt" || cont_type_ == "op"))
+            {
+                RCLCPP_INFO(get_logger(),"Selected control type is not valid!"); return;
             }
 
             iteration_ = 0;
@@ -118,7 +123,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             Eigen::Vector3d init_position(Eigen::Vector3d(init_cart_pose_.p.data) + Eigen::Vector3d(0,0,0.1));
 
             // EE's trajectory end position (just opposite y)
-            Eigen::Vector3d end_position; end_position << init_position[0], -init_position[1], init_position[2];
+            Eigen::Vector3d end_position; end_position << init_position[0]+0.1, -init_position[1], init_position[2];
 
             // Plan trajectory
             double traj_duration = 5, acc_duration = 0.5, t = 0.0, radius=0.3;
@@ -246,34 +251,6 @@ class Iiwa_pub_sub : public rclcpp::Node
                     
                 } else if(cmd_interface_ == "effort"){
                     
-                    /*Vector6d cartvel; cartvel << p.vel, des_vel_rot_;
-                    Vector6d cartacc; cartacc << p.acc, des_acc_rot_;
-                        
-                    KDL::JntArray dpos, dvel, dacc;
-                    dpos.resize(robot_->getNrJnts());
-                    dvel.resize(robot_->getNrJnts());
-                    dacc.resize(robot_->getNrJnts());
-                    
-                    //dvel.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
-                    KDL::Frame nextFrame; nextFrame.M = des_pos_rot_.M; nextFrame.p = toKDL(p.pos);
-                    robot_->getInverseKinematics(nextFrame, dpos);
-                    //dacc.data = pseudoinverse(robot_->getEEJacobian().data) * (cartacc - robot_->getEEJacDotqDot());
-                    
-                    Eigen::MatrixXd Jdamp = controller_->computeDampedPseudoInverse(robot_->getEEJacobian().data, 0.05); //0.01
-                    dvel.data = Jdamp*cartvel;
-                    dacc.data = Jdamp * (cartacc - robot_->getEEJacDotqDot());
-                    
-                    //dvel.data = Eigen::VectorXd::Zero(7);
-                    //dacc.data = Eigen::VectorXd::Zero(7);
-                    
-                    
-                    joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, 12, 4, *robot_) - robot_->getGravity();
-                                                                              // 12 3
-                    //joint_efforts_.data = controller_->idCntr(desFrame, desTwistV, desTwistA, 50, 0, 10, 0); */
-                    
-                    
-                    /////////////////////////////////////////////// CLIK
-                    
                     Vector6d cartvel; cartvel << p.vel, des_vel_rot_;
                     Vector6d cartacc; cartacc << p.acc, des_acc_rot_;
                     
@@ -281,13 +258,13 @@ class Iiwa_pub_sub : public rclcpp::Node
                     KDL::Twist d_vel = toKDLTwist(cartvel);
                     KDL::Twist d_acc = toKDLTwist(cartacc);
                     
-                    controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda);
+                    if(cont_type_ == "jnt"){
+                    controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda_clik);
                     joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
-                    
-                    //joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, 0, KD_o, 0, *robot_, lambda);
-                    
-                    ///////////////////////////////////////////////////
-                    
+                    }else if(cont_type_ == "op"){
+                    joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, 0, KD_o, 0, *robot_, lambda_op) - robot_->getGravity();
+                    robot_->getInverseKinematics(d_pos, dpos);
+                    }
                 }   
 
                 // Update KDLrobot structure
@@ -373,15 +350,17 @@ class Iiwa_pub_sub : public rclcpp::Node
         double t_;
         std::string cmd_interface_;
         std::string traj_type_;
+        std::string cont_type_;
         KDL::Frame init_cart_pose_;
         
         double KP_j = 12;
         double KD_j = 5;
-        double lambda = 0.01;
         double KP_clik = 10;
         double KD_clik = 4;
-        double KP_o = 2;
-        double KD_o = 1;
+        double lambda_clik = 0.01;
+        double KP_o = 8;
+        double KD_o = 5;
+        double lambda_op = 0.01;
 };
 
  
