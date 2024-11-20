@@ -219,7 +219,8 @@ inline void computeErrors(const KDL::Frame &_Fd,
     Eigen::Matrix<double,3,3,Eigen::RowMajor> R_d(_Fd.M.data);
     Eigen::Matrix<double,3,3,Eigen::RowMajor> R_e(_Fe.M.data);
     e << computeLinearError(toEigen(_Fd.p), toEigen(_Fe.p)), computeOrientationError(R_d, R_e);
-    edot << computeLinearError(toEigen(_Vd.vel), toEigen(_Ve.vel)), -toEigen(_Ve.rot);//computeOrientationVelocityError(toEigen(_Vd.rot), toEigen(_Ve.rot), R_d, R_e);
+    //edot << computeLinearError(toEigen(_Vd.vel), toEigen(_Ve.vel)), -toEigen(_Ve.rot);
+    edot << computeLinearError(toEigen(_Vd.vel), toEigen(_Ve.vel)), computeOrientationVelocityError(toEigen(_Vd.rot), toEigen(_Ve.rot), R_d, R_e);
 }
 
 inline Eigen::MatrixXd weightedPseudoInverse(const Eigen::MatrixXd &W,

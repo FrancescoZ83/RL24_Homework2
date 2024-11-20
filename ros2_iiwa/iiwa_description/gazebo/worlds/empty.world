@@ -3,17 +3,17 @@
   <!-- We use a custom world for the rrbot so that the camera angle is launched correctly -->
 
   <world name="default">
+    <!-- Included light -->
     <include>
-      <uri>model://ground_plane</uri>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Sun</uri>
+    </include>
+ 
+    <!-- Included model -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Ground Plane</uri>
     </include>
 
     <gravity>0 0 0</gravity>
-
-
-    <!-- Global light source -->
-    <include>
-      <uri>model://sun</uri>
-    </include>
 
     <!-- Focus camera on tall pendulum -->
     <gui fullscreen='0'>

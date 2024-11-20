@@ -17,7 +17,7 @@ from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, Regi
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution, OrSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -291,7 +291,7 @@ def generate_launch_description():
         parameters=[
             robot_description,
         ],
-        condition=UnlessCondition(use_planning),
+        condition=UnlessCondition(OrSubstitution(use_planning, use_sim)),
     )
     iiwa_simulation_world = PathJoinSubstitution(
         [FindPackageShare(description_package),
@@ -299,7 +299,7 @@ def generate_launch_description():
     )
 
 
-    declared_arguments.append(DeclareLaunchArgument('gz_args', default_value='-r -v 1 empty.sdf',
+    declared_arguments.append(DeclareLaunchArgument('gz_args', default_value=iiwa_simulation_world,
                               description='Arguments for gz_sim'),)    
 
     gazebo = IncludeLaunchDescription(
@@ -376,7 +376,6 @@ def generate_launch_description():
             on_exit=[robot_controller_spawner],
         )
     )
-    
 
     nodes = [
         gazebo,
