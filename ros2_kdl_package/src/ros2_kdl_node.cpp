@@ -36,6 +36,8 @@ class Iiwa_pub_sub : public rclcpp::Node
             // declare cmd_interface parameter (position, velocity)
             declare_parameter("cmd_interface", "position"); // defaults to "position"
             get_parameter("cmd_interface", cmd_interface_);
+            
+            // other parameters
             declare_parameter("traj_type", "lin_pol");
             get_parameter("traj_type", traj_type_);
             declare_parameter("cont_type", "jnt");
@@ -89,6 +91,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             joint_velocities_.resize(nj);
             joint_efforts_.resize(nj);
             
+            // joint references for effort control
             dpos.resize(robot_->getNrJnts());
             dvel.resize(robot_->getNrJnts());
             dacc.resize(robot_->getNrJnts());
@@ -122,7 +125,7 @@ class Iiwa_pub_sub : public rclcpp::Node
             // EE's trajectory initial position (just an offset)
             Eigen::Vector3d init_position(Eigen::Vector3d(init_cart_pose_.p.data) + Eigen::Vector3d(0,0,0.1));
 
-            // EE's trajectory end position (just opposite y)
+            // EE's trajectory end position (different x and opposite y)
             Eigen::Vector3d end_position; end_position << init_position[0]+0.1, -init_position[1], init_position[2];
 
             // Plan trajectory
@@ -144,10 +147,12 @@ class Iiwa_pub_sub : public rclcpp::Node
                 p = planner_circle.compute_trajectory_circle(t, acc_duration);
             }
             
+            // Definition of desired orientation
             KDL::Frame des_pos_rot_; des_pos_rot_.M = init_cart_pose_.M; des_pos_rot_.p = toKDL(p.pos);
             Eigen::VectorXd des_vel_rot_ = Eigen::VectorXd::Zero(3);
             Eigen::VectorXd des_acc_rot_ = Eigen::VectorXd::Zero(3);
             
+            // Initialization of joint ref. for effort control (needed for numerical integration)
             dvel.data = Eigen::VectorXd::Zero(7);
             robot_->getInverseKinematics(des_pos_rot_, dpos);
             
@@ -172,7 +177,9 @@ class Iiwa_pub_sub : public rclcpp::Node
                 for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
                     desired_commands_[i] = joint_velocities_(i);
                 }
-            } else if(cmd_interface_ == "effort"){
+            }
+            // effort control publisher 
+            else if(cmd_interface_ == "effort"){
                 cmdPublisher_ = this->create_publisher<FloatArray>("/effort_controller/commands", 10);
                 timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
                                             std::bind(&Iiwa_pub_sub::cmd_publisher, this));
@@ -249,20 +256,31 @@ class Iiwa_pub_sub : public rclcpp::Node
                     joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
                     joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
                     
-                } else if(cmd_interface_ == "effort"){
+                } 
+                // computation of joint efforts
+                else if(cmd_interface_ == "effort"){
                     
+                    // Desired twists as Eigen::VectorXd objects
                     Vector6d cartvel; cartvel << p.vel, des_vel_rot_;
                     Vector6d cartacc; cartacc << p.acc, des_acc_rot_;
                     
+                    // Desired frame position and twists as KDL objects
                     KDL::Frame d_pos; d_pos.M = des_pos_rot_.M; d_pos.p = toKDL(p.pos);
                     KDL::Twist d_vel = toKDLTwist(cartvel);
                     KDL::Twist d_acc = toKDLTwist(cartacc);
                     
+                    
                     if(cont_type_ == "jnt"){
+                    
+                    // From the trajectory in op. space to the trajectory in joint space thanks to CLIK algorithm
                     controller_->CLIK(d_pos, d_vel, d_acc, KP_clik, KD_clik, dpos, dvel, dacc, dt, *robot_, lambda_clik);
+                    // Inverse Dynamics controller in joint space
                     joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
-                    }else if(cont_type_ == "op"){
+                    }
+                    else if(cont_type_ == "op"){
+                    // Inverse Dynamics controller in operational space
                     joint_efforts_.data = controller_->idCntr(d_pos, d_vel, d_acc, KP_o, 0, KD_o, 0, *robot_, lambda_op) - robot_->getGravity();
+                    // Getting the final reference for ending pose
                     robot_->getInverseKinematics(d_pos, dpos);
                     }
                 }   
@@ -282,6 +300,7 @@ class Iiwa_pub_sub : public rclcpp::Node
                         desired_commands_[i] = joint_velocities_(i);
                     }
                 } else if(cmd_interface_ == "effort"){
+                    // Send joint effort commands
                     for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
                         desired_commands_[i] = joint_efforts_(i);
                     }
@@ -301,10 +320,12 @@ class Iiwa_pub_sub : public rclcpp::Node
                     desired_commands_[i] = 0.0;
                 }} else if(cmd_interface_ == "effort"){
                     
+                    // Ending pose reference
                     robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
                     dvel.data = Eigen::VectorXd::Zero(7);
                     dacc.data = Eigen::VectorXd::Zero(7);
                     
+                    // Regulation to the ending pose
                     joint_efforts_.data = controller_->idCntr(dpos, dvel, dacc, KP_j, KD_j, *robot_) - robot_->getGravity();
                     for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
                     desired_commands_[i] = joint_efforts_(i);
